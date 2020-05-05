@@ -1,0 +1,160 @@
+---
+title: "Phage reazurin"
+author: "tara"
+date: "4/2/2020"
+output: html_document
+---
+
+Alice notes on experimental setup:
+
+Stationary:
+-	Grow overnight bacteria from a streaked plate
+-	Add 200uL of overnight bacteria into 2mL BHI media
+-	Shake at 37C for 2hrs
+-	Then add 650uL of this bacteria + 650uL of 0.4% agar BHI 
+-	Plate 100uL into each well
+More bacteria:
+-	Grow overnight bacteria from a streaked plate
+-	Add 650uL overnight bacteria into 650uL of 0.4% agar BHI
+-	Plate 100uL into each well
+Regular: 
+-	Grow overnight bacteria
+-	Add 13uL of overnight bacteria into 1,287uL of heated BHI + 0.2% agar
+-	Plate 100uL into each well
+Notes:
+-	Phage stock locations found on Mission Control file under Phage tab
+-	Plate dilutions before plating bacteria
+-	For negative controls with bacteria: add 100uL of appropriate bacteria mixed with BHI + 0.2% agar then add 100uL SM buffer
+-	BHI negative: add 100uL of BHI + 0.2% agar then add 100uL SM buffer
+-	Final agar concentration per well is 0.1%
+-	Final volume per well is 200uL
+-	When using agar from room temp, microwave until boil then aliquot into 1.5/2mL tubes that can be put on the heatblock
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# change root directory to the folder which contains your data files
+knitr::opts_knit$set(root.dir = '/Volumes/GoogleDrive/My Drive/PhageMetabolism/Data/')
+```
+
+```{r data and libraries}
+
+require(ggplot2)
+require(xlsx)
+require(reshape2)
+
+# read in the data files
+rz_data <-read.xlsx("Tara Rz 030220 Rz.xlsx",1)
+rs_data <- read.xlsx("Tara Rz 030220 Rs.xlsx",1)
+growth_data <- read.xlsx("Tara Rz 030220 OD700.xlsx",1)
+
+#read in a map of the 96-well plate setup so we know which wells correspond to which condition
+plate_setup<-read.xlsx("plate_setup.xlsx",1)
+#reformat plate setup to obtain well location for each sample
+plate_setup <- reshape2::melt(plate_setup, id.vars="NA.")
+colnames(plate_setup) <- c("Row", "Column", "Label")
+plate_setup$Column<-gsub(pattern="X", replacement="", plate_setup$Column)
+plate_setup$index <- paste(plate_setup$Row, plate_setup$Column, sep="")
+plate_setup <- na.omit(plate_setup)
+
+# reformat the flouresnce and OD data files into ggplot2 friendly format
+column_names<-t(rz_data[9,])
+colnames(rz_data) <- as.character(column_names)
+rz_data_fmt <- rz_data[-c(1:9),]
+rz_data_fmt <- reshape2::melt(rz_data_fmt, id.var=c("Reading", "avg. time [s]"))
+colnames(rz_data_fmt) <- c("Reading", "time_s","well_location", "AU")
+rz_data_fmt$well_location <- gsub(pattern=".*\\(", replacement="", rz_data_fmt$well_location)
+rz_data_fmt$well_location <- gsub(pattern=")", replacement="", rz_data_fmt$well_location)
+rz_data_fmt$well_location <- gsub(pattern="0", replacement="", rz_data_fmt$well_location)
+rz_data_fmt$Type <- c("Resazurin (oxidized)")
+
+# repeat for other 2 data files
+column_names<-t(rs_data[9,])
+colnames(rs_data) <- as.character(column_names)
+rs_data_fmt <- rs_data[-c(1:9),]
+rs_data_fmt <- reshape2::melt(rs_data_fmt, id.var=c("Reading", "avg. time [s]"))
+colnames(rs_data_fmt) <- c("Reading", "time_s","well_location", "AU")
+rs_data_fmt$well_location <- gsub(pattern=".*\\(", replacement="", rs_data_fmt$well_location)
+rs_data_fmt$well_location <- gsub(pattern=")", replacement="", rs_data_fmt$well_location)
+rs_data_fmt$well_location <- gsub(pattern="0", replacement="", rs_data_fmt$well_location)
+rs_data_fmt$Type <- c("Resorufin (reduced)")
+
+column_names<-t(growth_data[9,])
+colnames(growth_data) <- as.character(column_names)
+growth_data_fmt <- growth_data[-c(1:9),]
+growth_data_fmt <- reshape2::melt(growth_data_fmt, id.var=c("Reading", "avg. time [s]"))
+colnames(growth_data_fmt) <- c("Reading", "time_s","well_location", "AU")
+growth_data_fmt$well_location <- gsub(pattern=".*\\(", replacement="", growth_data_fmt$well_location)
+growth_data_fmt$well_location <- gsub(pattern=")", replacement="", growth_data_fmt$well_location)
+growth_data_fmt$well_location <- gsub(pattern="0", replacement="", growth_data_fmt$well_location)
+growth_data_fmt$Type <- c("Growth (OD700)")
+
+#combine all 3 data files into 1 dataframe
+all_data <- rbind(rz_data_fmt, rs_data_fmt, growth_data_fmt)
+# add condition labels by merging with plate_setup
+all_data <-merge(x=all_data, y=plate_setup, by.x="well_location", by.y="index", all.y=TRUE)
+
+all_data<-na.omit(all_data)
+
+```
+
+
+```{r first try plotting, fig.width=8 }
+
+all_data$time_s <- as.numeric(as.character(all_data$time_s))
+all_data$time_h <- all_data$time_s/3600
+
+### add new column to dataframe to allow for facetting 
+all_data$sample_category <- ifelse(all_data$Label=="BHI Neg" | all_data$Label == "SM Only" ,"Solvent Background", "Sample" )
+
+all_data$sample_category <- ifelse(grepl("Stat", all_data$Label),"Stat host", all_data$sample_category )
+all_data$sample_category <- ifelse(grepl("Half", all_data$Label),"Overnight host", all_data$sample_category )
+all_data$sample_category <- ifelse(grepl("Reg", all_data$Label),"100-fold diluted host", all_data$sample_category)
+
+all_data$phage_dilution <- all_data$Label
+all_data$phage_dilution <-ifelse(grepl("10", all_data$Label), gsub(pattern=".*10-", replacement="", all_data$Label), all_data$phage_dilution)
+all_data$phage_dilution <-gsub(pattern="1", replacement="10-fold phage dilution", all_data$phage_dilution )
+all_data$phage_dilution <-gsub(pattern="2", replacement="100-fold phage dilution", all_data$phage_dilution )
+all_data$phage_dilution <-gsub(pattern="3", replacement="1000-fold phage dilution", all_data$phage_dilution )
+all_data$phage_dilution <-ifelse(grepl("Neg", all_data$Label), "Neg", all_data$phage_dilution)
+all_data$phage_dilution <-ifelse(grepl("Stock", all_data$Label), "Phage Stock", all_data$phage_dilution)
+
+
+
+# det number of time-points
+max(as.numeric(as.character(all_data$Reading)))
+
+# 720 is a lot, will be slow to plot!
+# select certain time-points to plot
+# e.g. plot the data from every 2h
+all_data$time_h <- round(all_data$time_h,1)
+desired_hours <- seq(from=0, to=24, by=2)
+
+all_data_subset <- all_data[all_data$time_h %in% desired_hours,]
+all_data_subset$AU <- as.numeric(as.character(all_data_subset$AU ))
+
+all_data_subset$phage_dilution <- factor(all_data_subset$phage_dilution, levels = c("SM Only", "Neg", "Phage Stock", "10-fold phage dilution", "100-fold phage dilution", "1000-fold phage dilution"))
+
+all_data_subset$sample_category <- factor(all_data_subset$sample_category, levels = c("Solvent Background", "100-fold diluted host", "Stat host", "Overnight host"))
+
+timeplot1<-ggplot()+geom_line(data=subset(all_data_subset), aes(x=time_h, y=AU, color=phage_dilution, group=well_location))+
+  facet_grid(Type~sample_category, scales="free")
+
+timeplot1
+
+# one of the negative controls looks weird, remove and replot
+timeplot2 <- ggplot()+geom_line(data=subset(all_data_subset, well_location!="F1" & well_location!="D1"), aes(x=time_h, y=AU, color=phage_dilution, group=well_location))+
+  geom_point(data=subset(all_data_subset, well_location!="F1" & well_location!="D1"), aes(x=time_h, y=AU, color=phage_dilution, group=well_location,   shape=phage_dilution))+
+  facet_grid(Type~sample_category, scales="free")+
+  scale_shape_manual(values=21,22,23,24,25,21,22)+
+  xlab("time (h)")
+
+timeplot2
+
+```
+
+Notes:
+*hard to interpret data, the neg controls were noisy
+*probably need to change experimental set up, so no agar 
+
+
